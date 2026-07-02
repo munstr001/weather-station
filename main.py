@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from datetime import datetime
@@ -9,9 +10,12 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -19,14 +23,8 @@ DATA_DIR = Path("weather_data")
 FALLBACK_DATA_FILE = Path("weather_data_fallback.txt")
 LOG_FILE = Path("weather.log")
 
-WINDY_API_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJjaSI6MTM0MTUwMDcsImlhdCI6MTc1MjMyMjc2NX0."
-    "hlymr7F7HlekwuKfWS408mjrt-O2-3rkmGV7VLGNOL4"
-)
-EXPECTED_KEY = (
-    "cb02429f36d0eea5c2527e994b870ccade2eacbe4e121ee33462300301528420"
-)
+WINDY_API_KEY = os.environ["WINDY_API_KEY"]
+EXPECTED_KEY = os.environ["EXPECTED_KEY"]
 
 WINDY_SYNC_DELAY_SEC = 310
 WINDY_REQUEST_TIMEOUT_SEC = 10

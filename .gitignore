@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+
+# Runtime data and logs
+weather_data/
+weather_data_fallback.txt
+weather.log
+weather.log.*
+
+# Arduino build artifacts
+firmware/**/build/
+*.elf
+*.bin
