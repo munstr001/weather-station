@@ -13,6 +13,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from flask import Flask, Response, abort, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -536,6 +537,15 @@ def weather():
     )
 
     return jsonify({"status": "ok", "received": received}), 200
+
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(exc: HTTPException):
+    if exc.code and exc.code < 500:
+        return exc
+
+    logging.exception("HTTP-ошибка запроса: %s", exc)
+    return jsonify({"status": "error", "message": exc.description}), exc.code
 
 
 @app.errorhandler(Exception)
