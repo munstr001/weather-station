@@ -11,6 +11,8 @@ WeatherMS/
 ├── main.py                          # Сервер Flask
 ├── requirements.txt                 # Зависимости Python
 ├── .env.example                     # Шаблон переменных окружения
+├── templates/
+│   └── dashboard.html               # Веб-дашборд
 ├── firmware/
 │   └── weather_station/
 │       └── weather_station.ino      # Прошивка ESP8266 (Wemos D1 mini)
@@ -99,7 +101,43 @@ python main.py
 
 Сервер слушает `127.0.0.1:5050`. Для продакшена используйте reverse proxy (nginx, Caddy) и HTTPS.
 
+Веб-дашборд доступен на `/` — одностраничный интерфейс с автообновлением через SSE.
+
+Пример Caddy для основного домена:
+
+```caddy
+https://{$SELF_STEAL_DOMAIN} {
+    handle /weather* {
+        reverse_proxy 127.0.0.1:5050
+    }
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:5050
+    }
+
+    handle /health {
+        reverse_proxy 127.0.0.1:5050
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:5050
+    }
+}
+```
+
 ### Эндпоинты
+
+#### `GET /`
+
+Веб-дашборд с текущими показаниями (адаптивный, mobile-friendly).
+
+#### `GET /api/current`
+
+JSON с последними данными для фронтенда.
+
+#### `GET /api/stream`
+
+Server-Sent Events: обновления каждые ~2 секунды при изменении данных.
 
 #### `GET /health`
 
