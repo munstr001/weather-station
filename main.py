@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, abort, jsonify, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -31,6 +32,9 @@ WINDY_REQUEST_TIMEOUT_SEC = 10
 WINDY_MAX_RETRIES = 3
 FILE_WRITE_RETRIES = 3
 FILE_WRITE_RETRY_DELAY_SEC = 0.2
+DATA_STALE_SEC = 600
+DATA_OFFLINE_SEC = 1800
+SSE_POLL_INTERVAL_SEC = 2
 
 TIME_FORMATS = (
     "%d-%m-%Y-%H-%M-%S",  # формат ESP8266
@@ -344,6 +348,135 @@ def build_windy_params(data: dict[str, object]) -> dict[str, object] | None:
         return None
 
     return params
+
+
+def wind_beaufort_label(speed_mps: float | None) -> str:
+    if speed_mps is None:
+        return "—"
+
+    thresholds = (
+        (0.3, "Штиль"),
+        (1.6, "Тихий"),
+        (3.4, "Лёгкий"),
+        (5.5, "Слабый"),
+        (8.0, "Умеренный"),
+        (10.8, "Свежий"),
+        (13.9, "Сильный"),
+        (17.2, "Крепкий"),
+        (20.8, "Очень крепкий"),
+        (24.5, "Шторм"),
+        (28.5, "Сильный шторм"),
+        (32.7, "Жестокий шторм"),
+    )
+
+    for threshold, label in thresholds:
+        if speed_mps < threshold:
+            return label
+
+    return "Ураган"
+
+
+def format_time_display(time_str: str | None) -> str:
+    if not time_str:
+        return "—"
+
+    parsed = parse_weather_time(time_str)
+    return parsed.strftime("%d.%m.%Y, %H:%M")
+
+
+def format_age_label(age_sec: int | None) -> str:
+    if age_sec is None:
+        return "—"
+    if age_sec < 60:
+        return f"{age_sec} сек назад"
+    if age_sec < 3600:
+        return f"{age_sec // 60} мин назад"
+    return f"{age_sec // 3600} ч назад"
+
+
+def compute_data_status(age_sec: int | None, has_data: bool) -> str:
+    if not has_data or age_sec is None:
+        return "waiting"
+    if age_sec >= DATA_OFFLINE_SEC:
+        return "waiting"
+    if age_sec >= DATA_STALE_SEC:
+        return "stale"
+    return "live"
+
+
+def get_record_age_sec(record: dict[str, object]) -> int | None:
+    time_str = record.get("time")
+    if not time_str:
+        return None
+
+    parsed = parse_weather_time(str(time_str))
+    now = datetime.utcnow()
+    return max(0, int((now - parsed).total_seconds()))
+
+
+def build_public_payload() -> dict[str, object]:
+    with _latest_data_lock:
+        record = latest_data.copy()
+
+    has_data = bool(record)
+    age_sec = get_record_age_sec(record) if has_data else None
+    status = compute_data_status(age_sec, has_data)
+
+    temp = safe_float(str(record.get("temperature"))) if has_data else None
+    humidity = safe_float(str(record.get("humidity"))) if has_data else None
+    pressure = safe_float(str(record.get("pressure"))) if has_data else None
+    wind = safe_float(str(record.get("wind"))) if has_data else None
+    gust = safe_float(str(record.get("gust"))) if has_data else None
+    dew_point = record.get("dp") if has_data else None
+
+    if isinstance(dew_point, str):
+        dew_point = safe_float(dew_point)
+
+    return {
+        "has_data": has_data,
+        "status": status,
+        "time": record.get("time") if has_data else None,
+        "time_display": format_time_display(str(record.get("time"))) if has_data else None,
+        "age_sec": age_sec,
+        "age_label": format_age_label(age_sec),
+        "temperature": temp,
+        "humidity": humidity,
+        "pressure": pressure,
+        "dew_point": dew_point,
+        "wind": wind,
+        "gust": gust,
+        "wind_beaufort_label": wind_beaufort_label(wind),
+        "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+@app.route("/", methods=["GET"])
+def dashboard():
+    return render_template("dashboard.html")
+
+
+@app.route("/api/current", methods=["GET"])
+def api_current():
+    return jsonify(build_public_payload()), 200
+
+
+@app.route("/api/stream", methods=["GET"])
+def api_stream():
+    def event_stream():
+        last_payload = ""
+        while True:
+            payload = json.dumps(build_public_payload(), ensure_ascii=False)
+            if payload != last_payload:
+                yield f"data: {payload}\n\n"
+                last_payload = payload
+            else:
+                yield ": keepalive\n\n"
+            time.sleep(SSE_POLL_INTERVAL_SEC)
+
+    response = Response(event_stream(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @app.route("/health", methods=["GET"])
